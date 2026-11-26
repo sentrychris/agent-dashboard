@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Activity, ArrowRight, ArrowUpRight, ChevronRight, CircleCheck, ClipboardList,
-  Clock3, FolderOpen, GitFork, LayoutGrid, ListTodo, Menu, MessageSquare, Radio, RefreshCw,
+  Activity, ArrowRight, ArrowUpRight, Check, ChevronRight, ChevronsUpDown, CircleCheck, ClipboardList,
+  Clock3, FolderOpen, GitFork, LayoutGrid, ListTodo, Menu, MessageSquare, Plus, Radio, RefreshCw,
   Search, Settings2, Terminal, Users, Workflow, X,
 } from 'lucide-react';
 import { agentStates, buildModel, eventType, eventTypes, initial, latestCheckResults, sourceName, taskStates, timeLabel } from './data.js';
@@ -32,6 +32,16 @@ const eventIcons = {
   error: Activity,
 };
 const conversationTypes = new Set(['task_assigned', 'agent_message', 'task_status_changed']);
+const emptyProject = { name: '', folder: '', openCodeUrl: '', openCodeDirectory: '' };
+
+async function projectRequest(route, method, input) {
+  const response = await fetch(`/api/dashboard/${route}`, {
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not save the project.');
+  return data;
+}
 
 function Badge({ state, dot = false }) {
   return <span className={`badge ${state.tone}`}>{dot && <span className="status-dot" />}{state.label}</span>;
@@ -214,7 +224,53 @@ function Dialog({ title, subtitle, onClose, children, wide = false }) {
   );
 }
 
-function SettingsDialog({ settings, openCode, mirror, onClose, onSaved }) {
+function ProjectSwitcher({ name, activeId, projects, disabled, switching, onSelect, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const container = useRef(null);
+  const button = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (event) => {
+      if (!container.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onOutside);
+    return () => document.removeEventListener('pointerdown', onOutside);
+  }, [open]);
+
+  function handleEscape(event) {
+    if (event.key !== 'Escape' || !open) return;
+    event.stopPropagation();
+    setOpen(false);
+    button.current?.focus();
+  }
+
+  return <div className="workspace-switcher" ref={container} onKeyDown={handleEscape}>
+    <button type="button" ref={button} className="workspace" aria-label={`Switch project (${name})`}
+      aria-expanded={open} aria-controls="project-switcher-options" disabled={disabled || switching}
+      onClick={() => setOpen((value) => !value)}>
+      <span className="workspace-icon">{initial(name)}</span>
+      <span className="workspace-label"><strong>{name}</strong><small>{switching ? 'Switching project…' : 'Project workspace'}</small></span>
+      <ChevronsUpDown size={14} className="workspace-chevrons" />
+    </button>
+    {open && <div id="project-switcher-options" className="project-options" role="group" aria-label="Saved projects">
+      <div className="project-option-list">
+        {projects.map((project) => <button type="button" className="project-option" key={project.id}
+          aria-current={activeId === project.id ? 'true' : undefined}
+          onClick={() => { setOpen(false); onSelect(project.id); }}>
+          <span className="workspace-icon">{initial(project.name)}</span><strong>{project.name}</strong>
+          {activeId === project.id && <Check size={15} />}
+        </button>)}
+      </div>
+      <button type="button" className="project-option project-add" onClick={() => { setOpen(false); onAdd(); }}>
+        <Plus size={16} /> Add project
+      </button>
+    </div>}
+  </div>;
+}
+
+function SettingsDialog({ editor, onClose, onSaved }) {
+  const { settings, openCode, mirror, isNew } = editor;
   const [values, setValues] = useState(settings);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -223,11 +279,7 @@ function SettingsDialog({ settings, openCode, mirror, onClose, onSaved }) {
     setSaving(true);
     setError('');
     try {
-      const response = await fetch('/api/dashboard/settings', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not save settings.');
+      await projectRequest(isNew ? 'projects' : 'settings', isNew ? 'POST' : 'PUT', values);
       onSaved();
     } catch (failure) {
       setError(failure.message);
@@ -238,23 +290,27 @@ function SettingsDialog({ settings, openCode, mirror, onClose, onSaved }) {
   function field(name) {
     return { value: values[name], onChange: (event) => setValues({ ...values, [name]: event.target.value }) };
   }
-  return <Dialog wide title="Data sources" subtitle="Dashboard settings" onClose={onClose}>
+  return <Dialog wide title={isNew ? 'Add project' : 'Data sources'} subtitle={isNew ? 'Dashboard settings' : settings.name} onClose={onClose}>
     <form className="settings-form" onSubmit={save}>
       <section>
-        <h3><FolderOpen size={17} /> Activity mirror <Badge state={{ label: mirror.error ? 'Unavailable' : `${mirror.files.length} log files`, tone: mirror.error ? 'red' : 'green' }} /></h3>
-        <label>Local log folder<input required {...field('folder')} placeholder="C:\path\to\agent-activity" /></label>
-        <p>The dashboard reads every <code>.jsonl</code> file here. New files and entries appear automatically after the PC mirror updates.</p>
-        {mirror.error && <p className="form-error">{mirror.error}</p>}
+        <h3>Project details</h3>
+        <label>Project name<input required {...field('name')} placeholder="Example project" /></label>
       </section>
       <section>
-        <h3><Terminal size={17} /> OpenCode V2 <Badge state={{ label: { off: 'Optional', connected: 'Connected', unavailable: 'Unavailable' }[openCode.status], tone: openCode.status === 'connected' ? 'green' : 'muted' }} /></h3>
+        <h3><FolderOpen size={17} /> Activity folder {mirror && <Badge state={{ label: mirror.error ? 'Unavailable' : `${mirror.files.length} log files`, tone: mirror.error ? 'red' : 'green' }} />}</h3>
+        <label>Local log folder<input required {...field('folder')} placeholder="C:\path\to\agent-activity" /></label>
+        <p>The dashboard reads <code>.jsonl</code> files from this folder. Use a separate folder for each project.</p>
+        {mirror?.error && <p className="form-error">{mirror.error}</p>}
+      </section>
+      <section>
+        <h3><Terminal size={17} /> OpenCode V2 <Badge state={{ label: { off: 'Optional', connected: 'Connected', unavailable: 'Unavailable' }[openCode?.status ?? 'off'], tone: openCode?.status === 'connected' ? 'green' : 'muted' }} /></h3>
         <label>Local API URL<input type="url" {...field('openCodeUrl')} placeholder="http://127.0.0.1:4096" /></label>
         <label>Project directory <span>Optional</span><input {...field('openCodeDirectory')} placeholder="Defaults to the parent of the log folder" /></label>
-        <p>Use a reachable OpenCode V2 server on this PC. A task ID in a session title (such as <code>ALD-112</code>) links its activity to that task.</p>
-        {openCode.warning && <p className="form-error">{openCode.warning}</p>}
+        <p>Use a reachable OpenCode V2 server on this PC. A known task ID in a session title links its activity to that task in this project.</p>
+        {openCode?.warning && <p className="form-error">{openCode.warning}</p>}
       </section>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div className="dialog-actions"><button type="button" className="button" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save sources'}</button></div>
+      <div className="dialog-actions"><button type="button" className="button" onClick={onClose}>Cancel</button><button type="submit" className="button primary" disabled={saving}>{saving ? 'Saving…' : isNew ? 'Add project' : 'Save sources'}</button></div>
     </form>
   </Dialog>;
 }
@@ -418,11 +474,14 @@ function App() {
   const [view, setView] = useState(currentView);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [projectError, setProjectError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [editor, setEditor] = useState(null);
   const [detail, setDetail] = useState(null);
   const [menu, setMenu] = useState(false);
   const request = useRef(null);
+  const activeProject = useRef(null);
   const refresh = useCallback(async (force = false) => {
     if (request.current && !force) return;
     request.current?.abort();
@@ -434,6 +493,11 @@ function App() {
       const payload = await result.json();
       if (!result.ok) throw new Error(payload.error || 'Dashboard data is unavailable.');
       if (request.current !== controller) return;
+      if (activeProject.current !== payload.settings.id) {
+        activeProject.current = payload.settings.id;
+        setDetail(null);
+        setProjectError('');
+      }
       setData(payload);
       setError('');
     } catch (failure) {
@@ -461,6 +525,28 @@ function App() {
     };
   }, [refresh]);
 
+  async function selectProject(id) {
+    setMenu(false);
+    if (id === data.settings.id) return;
+    setSwitching(true);
+    setProjectError('');
+    try {
+      await projectRequest('active-project', 'PUT', { id });
+      await refresh(true);
+    } catch (failure) {
+      setProjectError(failure.message);
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  function configureProject() {
+    setMenu(false);
+    if (!data) return;
+    const { settings, openCode, mirror } = data;
+    setEditor({ settings, openCode, mirror, isNew: false });
+  }
+
   const model = useMemo(() => buildModel(data?.events ?? [], data?.agents ?? []), [data]);
   const names = useMemo(() => new Map(model.agents.map(({ id, name }) => [id, name])), [model]);
   const counts = {
@@ -476,6 +562,7 @@ function App() {
   const onEdge = (edge) => open('edge', edge);
   const mirrorStatus = error || data?.mirror.error ? 'Unavailable' : !data ? 'Connecting' : data.mirror.files.length ? 'Local mirror' : 'No logs yet';
   const project = data?.project ?? 'Aldervast';
+  const projectId = data?.settings.id;
   const [title, description] = headings[view];
   const now = Date.now();
 
@@ -483,12 +570,14 @@ function App() {
     <div className="app">
       <aside className={`sidebar ${menu ? 'sidebar-open' : ''}`}>
         <a className="brand" href="#overview" onClick={() => setMenu(false)}><span className="brand-mark"><Workflow size={21} /></span><span>Agent Dashboard<small>Local workspace</small></span></a>
-        <div className="workspace"><span className="workspace-icon">{initial(project)}</span><div><strong>{project}</strong><small>Project workspace</small></div></div>
+        <ProjectSwitcher name={project} activeId={projectId} projects={data?.projects ?? []}
+          disabled={!data} switching={switching} onSelect={selectProject}
+          onAdd={() => { setMenu(false); setEditor({ settings: emptyProject, isNew: true }); }} />
         <nav aria-label="Dashboard navigation"><span className="nav-label">WORKSPACE</span>{overviewViews.map(([id, label, Icon]) => (
           <a key={id} className={view === id ? 'nav-item active' : 'nav-item'} href={`#${id}`} aria-current={view === id ? 'page' : undefined} onClick={() => setMenu(false)}><Icon size={18} />{label}</a>
         ))}</nav>
         <div className="sidebar-bottom">
-          <button className="nav-item" onClick={() => { if (data) setSettingsOpen(true); setMenu(false); }}><Settings2 size={18} /> Data sources</button>
+          <button className="nav-item" onClick={configureProject} disabled={!data || switching}><Settings2 size={18} /> Data sources</button>
           <div className="sidebar-status"><span className={`status-dot ${mirrorStatus === 'Local mirror' ? 'green' : mirrorStatus === 'Unavailable' ? 'red' : 'muted'}`} /><div><strong>{mirrorStatus}</strong><small>{data?.mirror.files.length ?? 0} log files detected</small></div></div>
         </div>
       </aside>
@@ -499,11 +588,11 @@ function App() {
           <div className="topbar-actions"><span className="updated"><Clock3 size={14} /> Last event {data?.mirror.lastEvent ? timeLabel(data.mirror.lastEvent) : '—'}</span>
             <button className="icon-button" title="Refresh activity" aria-label="Refresh activity" onClick={() => refresh(true)} disabled={refreshing}><RefreshCw size={16} className={refreshing ? 'spinning' : ''} /></button></div>
         </header>
-        <div className="main-content">
+        <div className="main-content" key={projectId}>
           <div className="page-heading"><div><p className="eyebrow"><span /> {project} / workspace</p><h1>{title}</h1><p>{description}</p></div>
-            <button className="button sources-button" onClick={() => setSettingsOpen(true)} disabled={!data}><Settings2 size={16} /> Data sources</button></div>
-          {(error || data?.mirror.error || data?.mirror.warnings.length > 0 || data?.openCode.warning) && <div className="notice" role="status">
-            <Activity size={17} /><div>{[error, data?.mirror.error, ...(data?.mirror.warnings ?? []), data?.openCode.warning].filter(Boolean).map((message) => <p key={message}>{message}</p>)}</div>
+            <button className="button sources-button" onClick={configureProject} disabled={!data || switching}><Settings2 size={16} /> Data sources</button></div>
+          {(error || projectError || data?.mirror.error || data?.mirror.warnings.length > 0 || data?.openCode.warning) && <div className="notice" role="status">
+            <Activity size={17} /><div>{[error, projectError, data?.mirror.error, ...(data?.mirror.warnings ?? []), data?.openCode.warning].filter(Boolean).map((message) => <p key={message}>{message}</p>)}</div>
           </div>}
           {!data && !error && <div className="panel"><Empty icon={RefreshCw} title="Loading project activity" /></div>}
           {data && view === 'overview' && <>
@@ -532,8 +621,8 @@ function App() {
           <footer><span><Radio size={14} /> Auto-refreshes locally every 3 seconds</span><span>Statuses reflect the latest available report.</span></footer>
         </div>
       </main>
-      {settingsOpen && data && <SettingsDialog settings={data.settings} openCode={data.openCode} mirror={data.mirror}
-        onClose={() => setSettingsOpen(false)} onSaved={() => { setSettingsOpen(false); refresh(true); }} />}
+      {editor && <SettingsDialog editor={editor} onClose={() => setEditor(null)}
+        onSaved={() => { setEditor(null); refresh(true); }} />}
       {detail && data && <Detail detail={detail} data={data} model={model} names={names} open={open} close={() => setDetail(null)} />}
     </div>
   );

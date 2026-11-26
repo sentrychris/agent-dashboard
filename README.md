@@ -18,10 +18,12 @@ npm run dev
 ```
 
 1. Create a local folder for your project's activity logs. For a first run, save the two [example JSONL files](docs/activity-log.md#example-project) in that folder.
-2. Open [http://127.0.0.1:4317](http://127.0.0.1:4317), select **Data sources**, enter the folder's absolute path under **Local log folder**, and save.
+2. Open [http://127.0.0.1:4317](http://127.0.0.1:4317), open the project switcher in the sidebar, then select **Add project**. Enter a name and the folder's absolute path under **Local log folder**.
 3. Have your agents or an integration append real events to that folder using the [JSONL schema](docs/activity-log.md). If your agents write logs in the cloud, mirror those files to the local folder.
 
-The dashboard checks the folder every three seconds and discovers new `.jsonl` files automatically. It shows one project at a time and takes its name from the logs. The prefilled folder and fallback name are Aldervast defaults; you can replace the folder in **Data sources**.
+The dashboard checks the selected project's folder every three seconds and discovers new `.jsonl` files automatically. Use a separate folder for each project. The switcher remembers your last selection, and **Data sources** edits the selected project's name, folder, and OpenCode connection.
+
+Existing single-project settings are imported automatically. A fresh setup starts with the Aldervast example configuration, which you can edit or keep alongside your other projects.
 
 To serve a built copy, run `npm run build` and then `npm start`.
 
@@ -40,6 +42,6 @@ In **Data sources**, enter the URL of a reachable loopback OpenCode V2 API. Set 
 
 `http://127.0.0.1:4096` is an example address. Use your server’s actual URL, or leave the field blank to use only your activity logs.
 
-To attach an OpenCode session to a task in your logs, set the session's `metadata.task_id` to that task's ID. Title-based matching currently recognizes only `ALD-…` IDs; use metadata for other task ID formats. If the API expects an `Authorization` header, set `DASHBOARD_OPENCODE_AUTHORIZATION` before launching the dashboard.
+To link a session to a task, include a full task ID already present in the selected project's logs in the session title (for example, `WEB-42 — Fix sidebar`). You can also set the session's `metadata.task_id` explicitly; metadata takes priority and works even before the task appears in the logs. If the API expects an `Authorization` header, set `DASHBOARD_OPENCODE_AUTHORIZATION` before launching the dashboard.
 
 The dashboard listens on loopback and saves source settings in `.dashboard/settings.json`. Agent statuses derived from logs reflect the latest report and may lag real activity.

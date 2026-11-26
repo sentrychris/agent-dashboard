@@ -45,10 +45,21 @@ svg { flex-shrink: 0; }
 .brand { display: flex; align-items: center; gap: 11px; margin: 0 4px 27px; font-size: 14px; font-weight: 700; letter-spacing: -.2px; white-space: nowrap; }
 .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: #f6a474; color: #2d1b14; }
 .brand small, .workspace small, .sidebar-status small { display: block; color: var(--dim); font-size: 11px; font-weight: 400; letter-spacing: 0; margin-top: 3px; }
-.workspace { display: flex; gap: 10px; align-items: center; background: #1c1d1f; border: 1px solid var(--border); border-radius: 9px; padding: 10px; margin-bottom: 24px; }
+.workspace-switcher { position: relative; margin-bottom: 24px; }
+.workspace { display: flex; width: 100%; gap: 8px; align-items: center; background: #1c1d1f; border: 1px solid var(--border); border-radius: 9px; padding: 10px; color: inherit; text-align: left; }
+.workspace:hover:not(:disabled), .workspace[aria-expanded="true"] { background: #232426; border-color: #49413b; }
 .workspace-icon { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; background: #352923; color: var(--accent); border: 1px solid #473329; border-radius: 7px; font-size: 12px; font-weight: 700; }
-.workspace div { min-width: 0; }
+.workspace-label { min-width: 0; flex: 1; }
 .workspace strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-chevrons { color: var(--dim); }
+.project-options { position: absolute; inset: calc(100% + 5px) 0 auto; z-index: 3; padding: 4px; border: 1px solid #38393b; border-radius: 8px; background: #202123; box-shadow: 0 8px 24px #090909a0; }
+.project-option-list { max-height: 235px; overflow: auto; }
+.project-option { width: 100%; display: flex; align-items: center; gap: 7px; padding: 6px; border: 0; border-radius: 5px; color: #e6e3df; background: transparent; font-size: 12px; text-align: left; }
+.project-option:hover { background: #2d2e31; }
+.project-option[aria-current="true"] { color: var(--accent); }
+.project-option .workspace-icon { width: 24px; height: 24px; flex-basis: 24px; font-size: 10px; }
+.project-option strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-add { margin-top: 3px; border-top: 1px solid var(--border); border-radius: 0 0 5px 5px; color: var(--muted); padding: 8px 6px; }
 .nav-label { display: block; color: var(--dim); font-size: 9px; letter-spacing: .13em; font-weight: 700; margin: 0 10px 9px; }
 .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; text-align: left; white-space: nowrap; border: 1px solid transparent; background: transparent; color: var(--muted); border-radius: 8px; margin-bottom: 3px; font-size: 13px; font-weight: 500; }
 .nav-item:hover { background: #202123; color: #f2f0ee; }

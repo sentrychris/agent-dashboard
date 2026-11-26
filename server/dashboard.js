@@ -1,16 +1,7 @@
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, normalize, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import { createLogReader, readMirrorStatus } from './logs.js';
-import { normalizeOpenCodeUrl, readOpenCode } from './opencode.js';
-
-const root = fileURLToPath(new URL('../', import.meta.url));
-const configPath = resolve(root, '.dashboard', 'settings.json');
-const defaults = {
-  folder: resolve(root, '..', 'aldervast-v1.14.96', 'agent-activity'),
-  openCodeUrl: '',
-  openCodeDirectory: '',
-};
+import { readOpenCode } from './opencode.js';
+import { createProjectStore } from './projects.js';
 
 function send(response, status, value) {
   response.writeHead(status, {
@@ -21,21 +12,7 @@ function send(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
-async function readSettings() {
-  try {
-    const values = JSON.parse(await readFile(configPath, 'utf8'));
-    return {
-      folder: typeof values.folder === 'string' && isAbsolute(values.folder) ? values.folder : defaults.folder,
-      openCodeUrl: values.openCodeUrl ? normalizeOpenCodeUrl(values.openCodeUrl) : '',
-      openCodeDirectory: typeof values.openCodeDirectory === 'string' && isAbsolute(values.openCodeDirectory) ? values.openCodeDirectory : '',
-    };
-  } catch (error) {
-    if (error.code !== 'ENOENT') console.warn(`Could not load dashboard settings: ${error.message}`);
-    return defaults;
-  }
-}
-
-async function parseSettings(request) {
+async function readRequest(request) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -44,35 +21,39 @@ async function parseSettings(request) {
     chunks.push(chunk);
   }
   const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  const folder = typeof input.folder === 'string' ? input.folder.trim() : '';
-  if (!isAbsolute(folder)) throw new Error('Enter the full path to the activity folder.');
-  const info = await stat(folder).catch(() => null);
-  if (!info?.isDirectory()) throw new Error('The activity folder does not exist or cannot be read.');
-  const directory = typeof input.openCodeDirectory === 'string' ? input.openCodeDirectory.trim() : '';
-  if (directory && !isAbsolute(directory)) throw new Error('Enter the full path to the OpenCode project directory.');
-  const url = typeof input.openCodeUrl === 'string' ? input.openCodeUrl.trim() : '';
-  return {
-    folder: normalize(folder),
-    openCodeUrl: url ? normalizeOpenCodeUrl(url) : '',
-    openCodeDirectory: directory ? normalize(directory) : '',
-  };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Send a JSON object.');
+  return input;
 }
 
-export function createDashboardApi() {
-  const readLogs = createLogReader();
-  let settings = readSettings();
-  let openCodeCache;
-  let writes = Promise.resolve();
+export function createDashboardApi(settingsPath) {
+  const store = createProjectStore(settingsPath);
+  const logReaders = new Map();
+  const openCodeCache = new Map();
+  const actions = new Map([
+    ['PUT /api/dashboard/settings', store.edit],
+    ['POST /api/dashboard/projects', store.add],
+    ['PUT /api/dashboard/active-project', store.select],
+  ]);
 
-  function openCode(config, project) {
+  function readLogs(config) {
+    let entry = logReaders.get(config.id);
+    if (entry?.folder !== config.folder) {
+      entry = { folder: config.folder, read: createLogReader() };
+      logReaders.set(config.id, entry);
+    }
+    return entry.read(config.folder);
+  }
+
+  function openCode(config, taskIds) {
     if (!config.openCodeUrl) return { status: 'off', events: [], agents: [] };
     const directory = config.openCodeDirectory || dirname(config.folder);
-    const key = JSON.stringify([config.openCodeUrl, directory, project]);
-    if (openCodeCache?.key === key && (!openCodeCache.done || Date.now() < openCodeCache.expires)) {
-      return openCodeCache.request;
+    const key = JSON.stringify([config.openCodeUrl, directory, config.name, taskIds]);
+    const old = openCodeCache.get(config.id);
+    if (old?.key === key && (!old.done || Date.now() < old.expires)) {
+      return old.request;
     }
     const cache = { key, done: false, expires: 0 };
-    cache.request = readOpenCode({ url: config.openCodeUrl, directory, project })
+    cache.request = readOpenCode({ url: config.openCodeUrl, directory, project: config.name, taskIds })
       .then((result) => ({ ...result, status: 'connected' }))
       .catch((error) => ({
         status: 'unavailable', events: [], agents: [],
@@ -82,7 +63,7 @@ export function createDashboardApi() {
         cache.done = true;
         cache.expires = Date.now() + 9000;
       });
-    openCodeCache = cache;
+    openCodeCache.set(config.id, cache);
     return cache.request;
   }
 
@@ -96,22 +77,13 @@ export function createDashboardApi() {
       return send(response, 403, { error: 'The dashboard accepts same-origin localhost requests only.' });
     }
 
-    if (path === '/api/dashboard/settings' && request.method === 'PUT') {
+    const action = actions.get(`${request.method} ${path}`);
+    if (action) {
       if (!request.headers['content-type']?.startsWith('application/json')) {
         return send(response, 415, { error: 'Use application/json settings.' });
       }
       try {
-        const updated = await parseSettings(request);
-        const write = writes.then(async () => {
-          await mkdir(dirname(configPath), { recursive: true });
-          await writeFile(`${configPath}.tmp`, JSON.stringify(updated, null, 2), 'utf8');
-          await rename(`${configPath}.tmp`, configPath);
-          settings = Promise.resolve(updated);
-          openCodeCache = undefined;
-        });
-        writes = write.catch(() => {});
-        await write;
-        return send(response, 200, updated);
+        return send(response, 200, await action(await readRequest(request)));
       } catch (error) {
         return send(response, 400, { error: error.message });
       }
@@ -122,17 +94,16 @@ export function createDashboardApi() {
     }
 
     try {
-      const config = await settings;
-      const [logs, heartbeat] = await Promise.all([readLogs(config.folder), readMirrorStatus(config.folder)]);
+      const { activeProjectId, projects } = await store.read();
+      const config = projects.find(({ id }) => id === activeProjectId);
+      const [logs, heartbeat] = await Promise.all([readLogs(config), readMirrorStatus(config.folder)]);
       const checkedAt = new Date().toISOString();
-      const project = logs.events.find((event) => event.project)?.project ?? 'Aldervast';
-      const open = await openCode(config, project);
-      const taskIds = new Map(logs.events.filter((event) => event.task_id).map((event) => [event.task_id.toLowerCase(), event.task_id]));
-      const taskId = (id) => id ? taskIds.get(id.toLowerCase()) ?? id : null;
-      const nativeEvents = open.events.map((event) => ({ ...event, task_id: taskId(event.task_id) }));
-      const events = [...logs.events, ...nativeEvents].sort((a, b) => b.recorded_at.localeCompare(a.recorded_at));
+      const taskIds = [...new Set(logs.events.map((event) => event.task_id).filter(Boolean))].sort();
+      const open = await openCode(config, taskIds);
+      const events = [...logs.events, ...open.events].sort((a, b) => b.recorded_at.localeCompare(a.recorded_at));
       return send(response, 200, {
-        project, events, agents: open.agents.map((agent) => ({ ...agent, taskId: taskId(agent.taskId) })), settings: config,
+        project: config.name, projects: projects.map(({ id, name }) => ({ id, name })),
+        events, agents: open.agents, settings: config,
         mirror: {
           files: logs.files, error: logs.error, warnings: logs.warnings,
           checkedAt, heartbeat,

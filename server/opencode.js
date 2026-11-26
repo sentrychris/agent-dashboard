@@ -8,11 +8,23 @@ export function normalizeOpenCodeUrl(value) {
   return url.origin;
 }
 
-function sessionEvents(session, messages, project) {
+function taskMatcher(taskIds) {
+  const known = new Map(taskIds.map((id) => [id.toLowerCase(), id]));
+  const candidates = [...known.keys()].filter((id) => /[\p{L}\p{N}]/u.test(id))
+    .sort((a, b) => b.length - a.length)
+    .map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const token = '[\\p{L}\\p{M}\\p{N}_-]';
+  const pattern = candidates.length ? new RegExp(`(?<!${token})(?:${candidates.join('|')})(?!${token})`, 'u') : null;
+  return (session) => {
+    const metadataTask = typeof session.metadata?.task_id === 'string' ? session.metadata.task_id.trim() : '';
+    if (metadataTask) return known.get(metadataTask.toLowerCase()) ?? metadataTask;
+    const match = pattern && typeof session.title === 'string' ? session.title.toLowerCase().match(pattern)?.[0] : null;
+    return match ? known.get(match) : null;
+  };
+}
+
+function sessionEvents(session, messages, project, taskId) {
   const from = `opencode:${session.id}`;
-  const metadataTask = session.metadata?.task_id;
-  const taskId = typeof metadataTask === 'string' && metadataTask.trim()
-    ? metadataTask.trim() : session.title?.match(/\bALD-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/i)?.[0] ?? null;
   const events = [];
   function add(id, millis, type, text, sender, recipient, kind) {
     if (!text?.trim() || !Number.isFinite(millis)) return;
@@ -47,11 +59,12 @@ function sessionEvents(session, messages, project) {
     }
   }
 
-  return { taskId, events };
+  return events;
 }
 
-export async function readOpenCode({ url, directory, project }) {
+export async function readOpenCode({ url, directory, project, taskIds = [] }) {
   const authorization = process.env.DASHBOARD_OPENCODE_AUTHORIZATION;
+  const matchTask = taskMatcher(taskIds);
   async function get(path) {
     const response = await fetch(`${url}${path}`, {
       headers: { Accept: 'application/json', ...(authorization && { Authorization: authorization }) },
@@ -77,7 +90,8 @@ export async function readOpenCode({ url, directory, project }) {
     const data = messages.status === 'fulfilled' && Array.isArray(messages.value) ? messages.value : [];
     const requests = permissions.status === 'fulfilled' && Array.isArray(permissions.value) ? permissions.value : [];
     const approvalActions = [...new Set(requests.map(({ action }) => action).filter(Boolean))];
-    const { taskId, events } = sessionEvents(session, data, project);
+    const taskId = matchTask(session);
+    const events = sessionEvents(session, data, project, taskId);
     return {
       agent: {
         id: `opencode:${session.id}`,
