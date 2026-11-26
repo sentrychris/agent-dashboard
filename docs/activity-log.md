@@ -109,4 +109,4 @@ For example, if the next attempt fails after the successful run above:
 }
 ```
 
-Without this file, the dashboard shows **Not reported** for cloud sync. It still shows the time of its local folder check and the latest agent report independently.
+Without this file, the dashboard shows **Not reported** for cloud sync on log-only projects. Projects connected directly to OpenCode show the latest API check instead. If a project uses both sources and publishes a heartbeat, both checks are shown.

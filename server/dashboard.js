@@ -59,6 +59,7 @@ export function createDashboardApi(settingsPath) {
         status: 'unavailable', events: [], agents: [],
         warning: `Couldn't read OpenCode at ${config.openCodeUrl}: ${error.message}`,
       }))
+      .then((result) => ({ ...result, checkedAt: new Date().toISOString() }))
       .finally(() => {
         cache.done = true;
         cache.expires = Date.now() + 9000;
@@ -109,7 +110,7 @@ export function createDashboardApi(settingsPath) {
           checkedAt, heartbeat,
           lastEvent: logs.events.length ? events.find((event) => event.file)?.recorded_at : null,
         },
-        openCode: { status: open.status, warning: open.warning ?? null },
+        openCode: { status: open.status, warning: open.warning ?? null, checkedAt: open.checkedAt ?? null },
       });
     } catch (error) {
       console.error(error);

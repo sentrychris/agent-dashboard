@@ -32,16 +32,16 @@ To serve a built copy, run `npm run build` and then `npm start`.
 - **Task briefs** show the latest status report and the most recent result for each named check on a task. Agents can optionally add [a blocker, next action, and verification](docs/activity-log.md#structured-task-updates) to make those details easy to scan.
 - **Conversation** in a task shows assignments, replies, and status updates oldest first, with verbatim messages and summaries labeled. Switch to **All activity** for every task event, including checks and tool activity.
 - **Needs attention** shows blocked or failed tasks, pending OpenCode approvals, and queued assignments with no acknowledgement after 30 minutes. Agents can also report [failed and passing checks](docs/activity-log.md#reporting-check-results) so a failure stays visible until it passes or the task closes. Select an item to open its source event or session.
-- **Source freshness** shows when the dashboard last checked the local folder, when the cloud mirror last synced successfully, and when the most recent agent report was recorded. To report cloud syncs, have your mirror write [`mirror-status.json`](docs/activity-log.md#cloud-mirror-heartbeat) in the local activity folder after each attempt, including successful runs that copy zero lines.
+- **Source freshness** shows when the dashboard last checked the local folder, when it last checked the OpenCode API for direct connections, and when the most recent agent report was recorded. If you use a cloud mirror, have it write [`mirror-status.json`](docs/activity-log.md#cloud-mirror-heartbeat) in the local activity folder after each attempt, including successful runs that copy zero lines.
 
-Existing JSONL files still work as-is. Check results are optional, and the cloud sync is shown as **Not reported** until a heartbeat is available.
+Existing JSONL files still work as-is. Check results and cloud mirror heartbeats are optional. A direct OpenCode connection can report its freshness without a heartbeat.
 
 ## Optional: connect OpenCode V2
 
 In **Data sources**, enter the URL of a reachable loopback OpenCode V2 API. Set **Project directory** if the OpenCode workspace is somewhere other than the parent of your log folder. The dashboard reads recent sessions, their last 30 messages, tool activity, and pending approvals.
 
-`http://127.0.0.1:4096` is an example address. Use your server’s actual URL, or leave the field blank to use only your activity logs.
+`http://127.0.0.1:4096` is an example address. For the registered local OpenCode service, use the exact URL printed by `opencode service status`; the dashboard uses OpenCode’s local authentication automatically. For another local server that requires an `Authorization` header, set `DASHBOARD_OPENCODE_AUTHORIZATION` before launching the dashboard. Leave the URL blank to use only your activity logs.
 
-To link a session to a task, include a full task ID already present in the selected project's logs in the session title (for example, `WEB-42 — Fix sidebar`). You can also set the session's `metadata.task_id` explicitly; metadata takes priority and works even before the task appears in the logs. If the API expects an `Authorization` header, set `DASHBOARD_OPENCODE_AUTHORIZATION` before launching the dashboard.
+To link a session to a task, include a full task ID already present in the selected project's logs in the session title (for example, `WEB-42 — Fix sidebar`). You can also set the session's `metadata.task_id` explicitly; metadata takes priority and works even before the task appears in the logs.
 
 The dashboard listens on loopback and saves source settings in `.dashboard/settings.json`. Agent statuses derived from logs reflect the latest report and may lag real activity.

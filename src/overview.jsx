@@ -1,4 +1,4 @@
-import { Bell, CircleCheck, Cloud, FolderOpen, MessageSquare, Radio } from 'lucide-react';
+import { Bell, CircleCheck, Cloud, FolderOpen, MessageSquare, Radio, Terminal } from 'lucide-react';
 import { attentionTypes, buildAttention, mirrorFreshness } from './attention.js';
 import { timeLabel } from './data.js';
 
@@ -39,27 +39,35 @@ export function AttentionPanel({ model, events, names, now, onOpen }) {
   </section>;
 }
 
-export function FreshnessPanel({ mirror, connectionError, events, names, now, onEvent }) {
+export function FreshnessPanel({ mirror, openCode, connectionError, events, names, now, onEvent }) {
   const heartbeat = mirror.heartbeat;
   const sync = mirrorFreshness(heartbeat, now);
+  const showOpenCode = openCode.status !== 'off';
+  const showCloudSync = !showOpenCode || (heartbeat && heartbeat.status !== 'unreported');
+  const api = connectionError ? { label: 'Status unavailable', tone: 'muted' } :
+    openCode.status === 'connected' ? { label: 'Connected', tone: 'green' } : { label: 'Unavailable', tone: 'red' };
   const report = events.find((event) => event.from && event.type !== 'tool_activity');
   const reportName = report && (names.get(report.from) ?? report.from);
   const local = connectionError ? { label: 'Dashboard disconnected', tone: 'red' } :
     mirror.error ? { label: 'Read failed', tone: 'red' } : { label: 'Readable', tone: 'green' };
   return <section className="panel freshness-panel">
-    <div className="panel-title"><div><h2><Radio size={16} /> Source freshness</h2><p>Folder checks, cloud syncs, and agent reports</p></div></div>
+    <div className="panel-title"><div><h2><Radio size={16} /> Source freshness</h2><p>Source checks and the latest agent report</p></div></div>
     <dl className="freshness-list">
       <div>
         <dt><FolderOpen size={15} /> Last local folder check</dt>
         <dd><Age value={mirror.checkedAt} now={now} /><span className={`badge ${local.tone}`}>{local.label}</span></dd>
       </div>
-      <div>
+      {showOpenCode && <div>
+        <dt><Terminal size={15} /> Last OpenCode API check</dt>
+        <dd><Age value={openCode.checkedAt} now={now} /><span className={`badge ${api.tone}`}>{api.label}</span></dd>
+      </div>}
+      {showCloudSync && <div>
         <dt><Cloud size={15} /> Last successful cloud sync</dt>
         <dd><Age value={heartbeat?.lastSuccessAt} now={now} /><span className={`badge ${sync.tone}`}>{sync.label}</span></dd>
         {heartbeat?.status === 'unreported' && <dd className="freshness-note">Cloud mirrors can report syncs in <code>mirror-status.json</code>.</dd>}
         {heartbeat?.status === 'error' && <dd className="freshness-note">Last attempt <Age value={heartbeat.checkedAt} now={now} />{heartbeat.error && ` · ${heartbeat.error}`}</dd>}
         {heartbeat?.status === 'invalid' && <dd className="freshness-note">{heartbeat.error}</dd>}
-      </div>
+      </div>}
       <div>
         <dt><MessageSquare size={15} /> Latest agent report</dt>
         <dd><Age value={report?.recorded_at} now={now} />{report && <button className="text-button" onClick={() => onEvent(report.id)}>{reportName}</button>}</dd>

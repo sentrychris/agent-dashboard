@@ -1,3 +1,5 @@
+import { Service } from '@opencode/client/service';
+
 export function normalizeOpenCodeUrl(value) {
   const url = new URL(value);
   const local = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
@@ -6,6 +8,17 @@ export function normalizeOpenCodeUrl(value) {
     throw new Error('Use a loopback OpenCode URL such as http://127.0.0.1:4096.');
   }
   return url.origin;
+}
+
+async function requestHeaders(url) {
+  const authorization = process.env.DASHBOARD_OPENCODE_AUTHORIZATION;
+  if (authorization) return { Accept: 'application/json', Authorization: authorization };
+
+  const endpoint = await Service.discover().catch(() => null);
+  if (endpoint && new URL(endpoint.url).origin === url) {
+    return { Accept: 'application/json', ...Service.headers(endpoint) };
+  }
+  return { Accept: 'application/json' };
 }
 
 function taskMatcher(taskIds) {
@@ -63,14 +76,17 @@ function sessionEvents(session, messages, project, taskId) {
 }
 
 export async function readOpenCode({ url, directory, project, taskIds = [] }) {
-  const authorization = process.env.DASHBOARD_OPENCODE_AUTHORIZATION;
+  const headers = await requestHeaders(url);
   const matchTask = taskMatcher(taskIds);
   async function get(path) {
     const response = await fetch(`${url}${path}`, {
-      headers: { Accept: 'application/json', ...(authorization && { Authorization: authorization }) },
+      headers,
       redirect: 'error',
       signal: AbortSignal.timeout(4000),
     });
+    if (response.status === 401) {
+      throw new Error('Authentication failed (HTTP 401). Use the exact URL from opencode service status, or set DASHBOARD_OPENCODE_AUTHORIZATION for a separately configured server.');
+    }
     if (!response.ok) throw new Error(`OpenCode returned HTTP ${response.status}.`);
     const body = await response.json();
     if (!body || typeof body.data !== 'object' || !body.data) throw new Error('Unexpected OpenCode V2 response.');

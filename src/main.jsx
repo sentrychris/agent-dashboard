@@ -306,7 +306,7 @@ function SettingsDialog({ editor, onClose, onSaved }) {
         <h3><Terminal size={17} /> OpenCode V2 <Badge state={{ label: { off: 'Optional', connected: 'Connected', unavailable: 'Unavailable' }[openCode?.status ?? 'off'], tone: openCode?.status === 'connected' ? 'green' : 'muted' }} /></h3>
         <label>Local API URL<input type="url" {...field('openCodeUrl')} placeholder="http://127.0.0.1:4096" /></label>
         <label>Project directory <span>Optional</span><input {...field('openCodeDirectory')} placeholder="Defaults to the parent of the log folder" /></label>
-        <p>Use a reachable OpenCode V2 server on this PC. A known task ID in a session title links its activity to that task in this project.</p>
+        <p>Use the exact local URL from <code>opencode service status</code> to connect to the running OpenCode desktop service. A known task ID in a session title links its activity to that task in this project.</p>
         {openCode?.warning && <p className="form-error">{openCode.warning}</p>}
       </section>
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -560,7 +560,7 @@ function App() {
   const onTask = (id) => open('task', id);
   const onEvent = (id) => open('event', id);
   const onEdge = (edge) => open('edge', edge);
-  const mirrorStatus = error || data?.mirror.error ? 'Unavailable' : !data ? 'Connecting' : data.mirror.files.length ? 'Local mirror' : 'No logs yet';
+  const mirrorStatus = error || data?.mirror.error ? 'Unavailable' : !data ? 'Connecting' : data.mirror.files.length ? 'Local logs' : 'No logs yet';
   const project = data?.project ?? 'Aldervast';
   const projectId = data?.settings.id;
   const [title, description] = headings[view];
@@ -578,7 +578,7 @@ function App() {
         ))}</nav>
         <div className="sidebar-bottom">
           <button className="nav-item" onClick={configureProject} disabled={!data || switching}><Settings2 size={18} /> Data sources</button>
-          <div className="sidebar-status"><span className={`status-dot ${mirrorStatus === 'Local mirror' ? 'green' : mirrorStatus === 'Unavailable' ? 'red' : 'muted'}`} /><div><strong>{mirrorStatus}</strong><small>{data?.mirror.files.length ?? 0} log files detected</small></div></div>
+          <div className="sidebar-status"><span className={`status-dot ${mirrorStatus === 'Local logs' ? 'green' : mirrorStatus === 'Unavailable' ? 'red' : 'muted'}`} /><div><strong>{mirrorStatus}</strong><small>{data?.mirror.files.length ?? 0} log files detected</small></div></div>
         </div>
       </aside>
       {menu && <button className="menu-backdrop" aria-label="Close navigation" onClick={() => setMenu(false)} />}
@@ -604,7 +604,7 @@ function App() {
             </div>
             <div className="overview-grid watch-grid">
               <AttentionPanel model={model} events={data.events} names={names} now={now} onOpen={open} />
-              <FreshnessPanel mirror={data.mirror} connectionError={error} events={data.events} names={names} now={now} onEvent={onEvent} />
+              <FreshnessPanel mirror={data.mirror} openCode={data.openCode} connectionError={error} events={data.events} names={names} now={now} onEvent={onEvent} />
             </div>
             <div className="overview-grid">
               <GraphPanel model={model} onAgent={onAgent} onEdge={onEdge} overview />
