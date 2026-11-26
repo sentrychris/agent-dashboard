@@ -2,7 +2,7 @@
 
 A local web dashboard for agent workflows. Follow assignments and task status, search agent messages and activity, and explore delegation and communication in an interactive graph. It works with any harness that writes the [activity log format](docs/activity-log.md) and can also read from a local OpenCode V2 server.
 
-![Aldervast workspace overview showing agent and task counts, a relationship graph, recent activity, and tracked tasks](docs/dashboard.png)
+![Aldervast workspace overview showing Needs attention, Source freshness, agent relationships, and recent activity](docs/dashboard.png)
 
 *Aldervast is the example workspace shown above. You can connect your own project.*
 
