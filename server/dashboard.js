@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLogReader } from './logs.js';
+import { createLogReader, readMirrorStatus } from './logs.js';
 import { normalizeOpenCodeUrl, readOpenCode } from './opencode.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -123,7 +123,8 @@ export function createDashboardApi() {
 
     try {
       const config = await settings;
-      const logs = await readLogs(config.folder);
+      const [logs, heartbeat] = await Promise.all([readLogs(config.folder), readMirrorStatus(config.folder)]);
+      const checkedAt = new Date().toISOString();
       const project = logs.events.find((event) => event.project)?.project ?? 'Aldervast';
       const open = await openCode(config, project);
       const taskIds = new Map(logs.events.filter((event) => event.task_id).map((event) => [event.task_id.toLowerCase(), event.task_id]));
@@ -134,6 +135,7 @@ export function createDashboardApi() {
         project, events, agents: open.agents.map((agent) => ({ ...agent, taskId: taskId(agent.taskId) })), settings: config,
         mirror: {
           files: logs.files, error: logs.error, warnings: logs.warnings,
+          checkedAt, heartbeat,
           lastEvent: logs.events.length ? events.find((event) => event.file)?.recorded_at : null,
         },
         openCode: { status: open.status, warning: open.warning ?? null },

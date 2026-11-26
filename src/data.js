@@ -21,6 +21,7 @@ export const eventTypes = {
   task_status_changed: { label: 'Status update', tone: 'green' },
   agent_message: { label: 'Message', tone: 'blue' },
   tool_activity: { label: 'Tool', tone: 'muted' },
+  check_result: { label: 'Check result', tone: 'purple' },
   error: { label: 'Error', tone: 'red' },
 };
 
@@ -62,15 +63,18 @@ export function buildModel(events, nativeAgents) {
   function addAgent(id, event) {
     if (!id) return;
     const publisher = event.file?.toLowerCase() === `${id.toLowerCase()}.jsonl`;
+    const isReport = id === event.from && event.type !== 'tool_activity';
     const existing = agents.get(id);
     if (!existing) {
       agents.set(id, {
         id, name: id, source: publisher ? event.source : null, lastSeen: event.recorded_at,
         status: 'unknown', statusSource: 'Log', taskId: null, parentId: null, publisher,
+        lastReport: isReport ? event : null,
       });
       return;
     }
     if (event.recorded_at > existing.lastSeen) existing.lastSeen = event.recorded_at;
+    if (isReport) existing.lastReport = event;
     if (publisher) {
       existing.publisher = true;
       existing.source = event.source;
@@ -100,20 +104,29 @@ export function buildModel(events, nativeAgents) {
     const task = tasks.get(event.task_id) ?? {
       id: event.task_id, owner: null, status: 'unknown', explicitStatus: false,
       summary: '', parentId: null, lastSeen: null, sources: new Set(),
+      statusEvent: null, assignment: null, acknowledged: false,
     };
     task.lastSeen = event.recorded_at;
     task.parentId = event.parent_task_id || task.parentId;
     task.sources.add(event.source);
     if (event.type === 'task_assigned') {
-      task.owner = event.to || task.owner;
+      if (event.to) {
+        task.owner = event.to;
+        task.assignment = event;
+        task.acknowledged = event.to === event.from;
+      }
       task.summary = event.text || task.summary;
-    } else if (!task.owner && event.type === 'task_status_changed') {
-      task.owner = event.from;
+    } else {
+      if (!task.owner && event.type === 'task_status_changed') task.owner = event.from;
+      if (task.assignment && event.from === task.owner) task.acknowledged = true;
     }
     if (!task.summary && event.text) task.summary = event.text;
-    if (event.status) {
+    if (event.status && event.type !== 'check_result') {
       const explicit = ['task_assigned', 'task_status_changed'].includes(event.type);
-      if (explicit || !task.explicitStatus) task.status = event.status;
+      if (explicit || !task.explicitStatus) {
+        task.status = event.status;
+        task.statusEvent = event;
+      }
       if (explicit) task.explicitStatus = true;
     }
     tasks.set(task.id, task);

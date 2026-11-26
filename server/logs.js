@@ -19,6 +19,7 @@ function parseEvent(line, file) {
     type: input.type,
     task_id: string(input.task_id),
     parent_task_id: string(input.parent_task_id),
+    check_id: string(input.check_id),
     from: string(input.from),
     to: string(input.to),
     status: statuses.has(input.status) ? input.status : null,
@@ -27,6 +28,33 @@ function parseEvent(line, file) {
   };
   const id = string(input.event_id) ?? createHash('sha256').update(JSON.stringify(event)).digest('hex');
   return { ...event, id: `log:${event.project ?? ''}:${id}`, file };
+}
+
+export async function readMirrorStatus(folder) {
+  try {
+    const status = JSON.parse(await readFile(join(folder, 'mirror-status.json'), 'utf8'));
+    const checkedAt = typeof status?.checked_at === 'string' ? Date.parse(status.checked_at) : NaN;
+    const successAt = status?.last_success_at == null
+      ? (status?.status === 'ok' ? checkedAt : null)
+      : (typeof status.last_success_at === 'string' ? Date.parse(status.last_success_at) : NaN);
+    const interval = status?.interval_seconds ?? 300;
+    if (!['ok', 'error'].includes(status?.status) || !Number.isFinite(checkedAt) ||
+        (successAt !== null && (!Number.isFinite(successAt) || successAt > checkedAt)) ||
+        !Number.isSafeInteger(interval) || interval < 1) {
+      return { status: 'invalid', error: 'mirror-status.json has invalid status, timestamps, or interval.' };
+    }
+
+    return {
+      status: status.status,
+      checkedAt: new Date(checkedAt).toISOString(),
+      lastSuccessAt: successAt === null ? null : new Date(successAt).toISOString(),
+      intervalSeconds: interval,
+      error: string(status.error),
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { status: 'unreported' };
+    return { status: 'invalid', error: 'Could not read a valid mirror-status.json.' };
+  }
 }
 
 export function createLogReader() {

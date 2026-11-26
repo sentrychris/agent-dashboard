@@ -72,10 +72,11 @@ export async function readOpenCode({ url, directory, project }) {
     const running = session.id in active;
     const [messages, permissions] = await Promise.allSettled([
       get(`${path}/message?limit=30&order=desc`),
-      running ? get(`${path}/permission`) : [],
+      get(`${path}/permission`),
     ]);
     const data = messages.status === 'fulfilled' && Array.isArray(messages.value) ? messages.value : [];
-    const pending = permissions.status === 'fulfilled' && Array.isArray(permissions.value) && permissions.value.length > 0;
+    const requests = permissions.status === 'fulfilled' && Array.isArray(permissions.value) ? permissions.value : [];
+    const approvalActions = [...new Set(requests.map(({ action }) => action).filter(Boolean))];
     const { taskId, events } = sessionEvents(session, data, project);
     return {
       agent: {
@@ -83,7 +84,8 @@ export async function readOpenCode({ url, directory, project }) {
         name: session.title || session.agent || 'OpenCode session',
         parentId: session.parentID ? `opencode:${session.parentID}` : null,
         source: 'opencode', taskId,
-        status: pending ? 'approval' : running ? 'working' : 'idle',
+        status: requests.length ? 'approval' : running ? 'working' : 'idle',
+        approvalCount: requests.length, approvalActions,
         lastSeen: new Date(session.time.updated).toISOString(),
       },
       events,

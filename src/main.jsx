@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { agentStates, buildModel, eventType, eventTypes, initial, sourceName, taskStates, timeLabel } from './data.js';
 import { RelationshipGraph } from './graph.jsx';
+import { AttentionPanel, FreshnessPanel } from './overview.jsx';
 import './styles.css';
 
 const overviewViews = [
@@ -27,6 +28,7 @@ const eventIcons = {
   task_status_changed: ClipboardList,
   agent_message: MessageSquare,
   tool_activity: Terminal,
+  check_result: CircleCheck,
   error: Activity,
 };
 
@@ -56,7 +58,7 @@ function EventList({ events, names, onEvent, compact = false }) {
     <ol className={`event-list ${compact ? 'event-list-compact' : ''}`}>
       {events.map((event) => {
         const type = eventType(event.type);
-        const Icon = eventIcons[event.type] ?? Activity;
+        const Icon = Object.hasOwn(eventIcons, event.type) ? eventIcons[event.type] : Activity;
         return (
           <li key={event.id}>
             <button className="event-row" onClick={() => onEvent(event.id)} title="Open event and conversation">
@@ -70,6 +72,7 @@ function EventList({ events, names, onEvent, compact = false }) {
                 <span className="event-tags">
                   <span>{type.label}</span>
                   {event.task_id && <span className="mono">{event.task_id}</span>}
+                  {event.check_id && <span>{event.check_id}</span>}
                   {!compact && <span>{sourceName(event.source)}</span>}
                   {event.text_kind && <span>{event.text_kind === 'verbatim' ? 'Verbatim' : 'Summary'}</span>}
                 </span>
@@ -168,7 +171,7 @@ function ActivityView({ events, model, names, onEvent }) {
   const term = query.trim().toLowerCase();
   const filtered = events.filter((event) => (type === 'all' || event.type === type) &&
     (agent === 'all' || event.from === agent || event.to === agent) &&
-    [event.text, event.from, names.get(event.from), event.to, names.get(event.to), event.task_id, event.source].join(' ').toLowerCase().includes(term));
+    [event.text, event.from, names.get(event.from), event.to, names.get(event.to), event.task_id, event.check_id, event.source].join(' ').toLowerCase().includes(term));
   return <section className="panel">
     <PanelTitle title="Activity log" description={`${filtered.length} ${filtered.length === 1 ? 'event' : 'events'} · newest first`} />
     <div className="filter-bar">
@@ -264,6 +267,10 @@ function Detail({ detail, data, model, names, open, close }) {
       <div><Badge state={agentStates[agent.status] ?? agentStates.unknown} dot /><span>{agent.statusSource}</span></div>
       <div><strong>Source</strong><span>{agent.source ? sourceName(agent.source) : 'Referenced in activity'}</span></div>
       <div><strong>Last observed</strong><span>{timeLabel(agent.lastSeen)}</span></div>
+      <div><strong>Last agent report</strong>{agent.lastReport
+        ? <button className="text-button" onClick={() => open('event', agent.lastReport.id)}>{timeLabel(agent.lastReport.recorded_at)}</button>
+        : <span>No report recorded</span>}</div>
+      {agent.approvalCount > 0 && <div><strong>Pending approvals ({agent.approvalCount})</strong><span>{agent.approvalActions.join(', ') || 'OpenCode'}</span></div>}
       {agent.taskId && <div><strong>Current task</strong>{model.tasks.some((task) => task.id === agent.taskId)
         ? <button className="text-button mono" onClick={() => open('task', agent.taskId)}>{agent.taskId}</button>
         : <span className="mono">{agent.taskId}</span>}</div>}
@@ -298,8 +305,13 @@ function Detail({ detail, data, model, names, open, close }) {
     info = <div className="detail-card">
       <div><strong>{[names.get(event.from) || event.from, names.get(event.to) || event.to].filter(Boolean).join(' → ') || sourceName(event.source)}</strong><time dateTime={event.recorded_at}>{new Date(event.recorded_at).toLocaleString()}</time></div>
       <div><span>{sourceName(event.source)}{event.file ? ` · ${event.file}` : ''}</span>{event.text_kind && <Badge state={{ label: event.text_kind === 'verbatim' ? 'Verbatim' : 'Summary', tone: 'muted' }} />}</div>
+      {event.check_id && <div><strong>Check</strong><span>{event.check_id}</span></div>}
       <p>{event.text || 'No message text recorded.'}</p>
-      {event.task_id && <div><button className="text-button mono" onClick={() => open('task', event.task_id)}>{event.task_id}</button>{event.status && <Badge state={taskStates[event.status]} dot />}</div>}
+      {(event.task_id || event.status) && <div>
+        {event.task_id && <button className="text-button mono" onClick={() => open('task', event.task_id)}>{event.task_id}</button>}
+        {event.status && <Badge state={event.type === 'check_result' && event.status === 'completed'
+          ? { label: 'Passed', tone: 'green' } : taskStates[event.status]} dot />}
+      </div>}
     </div>;
   }
   return <Dialog title={title} subtitle={subtitle} onClose={close}>
@@ -381,6 +393,7 @@ function App() {
   const mirrorStatus = error || data?.mirror.error ? 'Unavailable' : !data ? 'Connecting' : data.mirror.files.length ? 'Local mirror' : 'No logs yet';
   const project = data?.project ?? 'Aldervast';
   const [title, description] = headings[view];
+  const now = Date.now();
 
   return (
     <div className="app">
@@ -415,6 +428,10 @@ function App() {
               <Stat icon={ClipboardList} tone="blue" label="Tasks in progress" value={counts.inProgress} detail={`${model.tasks.length} tracked in total`} view="tasks" />
               <Stat icon={CircleCheck} tone="green" label="Tasks completed" value={counts.completed} detail="Recorded as complete" view="tasks" />
               <Stat icon={MessageSquare} tone="purple" label="Agent communications" value={counts.messages} detail="Messages and assignments" view="activity" />
+            </div>
+            <div className="overview-grid watch-grid">
+              <AttentionPanel model={model} events={data.events} names={names} now={now} onOpen={open} />
+              <FreshnessPanel mirror={data.mirror} connectionError={error} events={data.events} names={names} now={now} onEvent={onEvent} />
             </div>
             <div className="overview-grid">
               <GraphPanel model={model} onAgent={onAgent} onEdge={onEdge} overview />
