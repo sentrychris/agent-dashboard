@@ -240,6 +240,19 @@ dialog::backdrop { background: #070707a8; }
 .task-brief-section { display: grid; gap: 7px; border-top: 1px solid var(--border); padding-top: 9px; }
 .task-brief-section h3 { margin: 0; font-size: 12px; font-weight: 650; }
 .task-brief-heading { display: flex; align-items: start; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; font-size: 11px; }
+.handoff-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 9px; color: var(--muted); font-size: 11px; }
+.handoff-text { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: #151617; color: inherit; font: 11px/1.45 'Cascadia Mono', Consolas, monospace; resize: vertical; }
+.handoff-draft { display: grid; gap: 8px; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: #1a1b1d; }
+.handoff-draft label { display: grid; gap: 4px; font-size: 12px; min-width: 0; }
+.handoff-draft input { min-width: 0; padding: 7px 8px; border: 1px solid #37383a; border-radius: 5px; background: #151617; color: inherit; font-size: 12px; }
+.detail-card .handoff-draft p { color: var(--muted); font-size: 11px; }
+.detail-card .handoff-draft .handoff-error { color: #f49b98; }
+.detail-card .handoff-history > p, .handoff-history-item time { color: var(--muted); font-size: 11px; }
+.handoff-history > ol { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0; }
+.handoff-history-item { display: grid; gap: 6px; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: #1a1b1d; }
+.handoff-history-item .task-brief-heading { align-items: center; overflow-wrap: anywhere; min-width: 0; }
+.detail-card .handoff-history-item .mono { font-size: 11px; color: var(--muted); }
+.handoff-history-item h4 { font-size: 11px; margin: 0; }
 .task-report-fields { margin: 0; display: grid; gap: 5px; }
 .task-report-fields > div { padding: 7px 8px; background: #242528; border-radius: 5px; }
 .task-report-fields dt { margin-bottom: 2px; font-size: 11px; font-weight: 650; color: var(--accent); }

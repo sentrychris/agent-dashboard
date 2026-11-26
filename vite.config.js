@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react';
 import { createDashboardApi } from './server/dashboard.js';
 
 export default defineConfig({
+  server: {
+    allowedHosts: true
+  },
   plugins: [
     react(),
     {
@@ -11,6 +14,7 @@ export default defineConfig({
         server.middlewares.use(createDashboardApi());
       },
       configurePreviewServer(server) {
+        server.a
         server.middlewares.use(createDashboardApi());
       },
     },

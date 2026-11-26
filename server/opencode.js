@@ -1,4 +1,7 @@
 import { Service } from '@opencode/client/service';
+import { handoffTaskLabel, parseHandoffPrompt } from '../src/opencode-draft.js';
+
+const recentMessageLimit = 30;
 
 export function normalizeOpenCodeUrl(value) {
   const url = new URL(value);
@@ -23,17 +26,24 @@ async function requestHeaders(url) {
 
 function taskMatcher(taskIds) {
   const known = new Map(taskIds.map((id) => [id.toLowerCase(), id]));
+  const handoffLabels = new Map(taskIds.map((id) => [handoffTaskLabel(id).toLowerCase(), id]));
   const candidates = [...known.keys()].filter((id) => /[\p{L}\p{N}]/u.test(id))
     .sort((a, b) => b.length - a.length)
     .map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const token = '[\\p{L}\\p{M}\\p{N}_-]';
   const pattern = candidates.length ? new RegExp(`(?<!${token})(?:${candidates.join('|')})(?!${token})`, 'u') : null;
-  return (session) => {
-    const metadataTask = typeof session.metadata?.task_id === 'string' ? session.metadata.task_id.trim() : '';
+  return (session, handoffTask) => {
+    const metadataTask = explicitTaskId(session);
     if (metadataTask) return known.get(metadataTask.toLowerCase()) ?? metadataTask;
+    if (handoffTask) return known.get(handoffTask.toLowerCase()) ?? handoffLabels.get(handoffTask.toLowerCase()) ?? handoffTask;
     const match = pattern && typeof session.title === 'string' ? session.title.toLowerCase().match(pattern)?.[0] : null;
     return match ? known.get(match) : null;
   };
+}
+
+function explicitTaskId(session) {
+  const task = session.metadata?.task_id;
+  return typeof task === 'string' ? task.trim() : '';
 }
 
 function sessionEvents(session, messages, project, taskId) {
@@ -75,7 +85,7 @@ function sessionEvents(session, messages, project, taskId) {
   return events;
 }
 
-export async function readOpenCode({ url, directory, project, taskIds = [] }) {
+export async function readOpenCode({ url, directory, project, taskIds = [], trackHandoffs = false }) {
   const headers = await requestHeaders(url);
   const matchTask = taskMatcher(taskIds);
   async function get(path) {
@@ -100,21 +110,31 @@ export async function readOpenCode({ url, directory, project, taskIds = [] }) {
     const path = `/api/session/${encodeURIComponent(session.id)}`;
     const running = session.id in active;
     const [messages, permissions] = await Promise.allSettled([
-      get(`${path}/message?limit=30&order=desc`),
+      get(`${path}/message?limit=${recentMessageLimit}&order=desc`),
       get(`${path}/permission`),
     ]);
     const data = messages.status === 'fulfilled' && Array.isArray(messages.value) ? messages.value : [];
     const requests = permissions.status === 'fulfilled' && Array.isArray(permissions.value) ? permissions.value : [];
     const approvalActions = [...new Set(requests.map(({ action }) => action).filter(Boolean))];
-    const taskId = matchTask(session);
+    let firstUserMessage = data.findLast((message) => message.type === 'user');
+    if ((trackHandoffs || !explicitTaskId(session)) && data.length === recentMessageLimit) {
+      // The opening handoff can be older than the dashboard's recent activity window.
+      const oldest = await get(`${path}/message?type=user&limit=1&order=asc`).catch(() => []);
+      firstUserMessage = oldest[0];
+    }
+    const handoff = parseHandoffPrompt(firstUserMessage?.text);
+    const taskId = matchTask(session, handoff?.taskId);
+    const handoffPickup = handoff?.handoffId && taskId && handoffTaskLabel(taskId).toLowerCase() === handoff.taskId.toLowerCase() &&
+      Number.isFinite(firstUserMessage?.time?.created)
+      ? { id: handoff.handoffId, at: new Date(firstUserMessage.time.created).toISOString() } : null;
     const events = sessionEvents(session, data, project, taskId);
     return {
       agent: {
         id: `opencode:${session.id}`,
         name: session.title || session.agent || 'OpenCode session',
         parentId: session.parentID ? `opencode:${session.parentID}` : null,
-        source: 'opencode', taskId,
-        status: requests.length ? 'approval' : running ? 'working' : 'idle',
+        source: 'opencode', taskId, handoffPickup,
+        status: requests.length ? 'approval' : running ? 'working' : permissions.status === 'fulfilled' ? 'idle' : 'unknown',
         approvalCount: requests.length, approvalActions,
         lastSeen: new Date(session.time.updated).toISOString(),
       },

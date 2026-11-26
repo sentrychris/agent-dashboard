@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity, ArrowRight, ArrowUpRight, Check, ChevronRight, ChevronsUpDown, CircleCheck, ClipboardList,
-  Clock3, FolderOpen, GitFork, LayoutGrid, ListTodo, Menu, MessageSquare, Plus, Radio, RefreshCw,
+  Clock3, Copy, FolderOpen, GitFork, LayoutGrid, ListTodo, Menu, MessageSquare, Plus, Radio, RefreshCw,
   Search, Settings2, Terminal, Users, Workflow, X,
 } from 'lucide-react';
-import { agentStates, buildModel, eventType, eventTypes, initial, latestCheckResults, sourceName, taskStates, timeLabel } from './data.js';
+import { agentStates, buildModel, eventType, eventTypes, handoffReports, initial, latestCheckResults, sourceName, taskConversationTypes, taskStates, timeLabel } from './data.js';
 import { RelationshipGraph } from './graph.jsx';
+import { buildHandoff } from './handoff.js';
+import { openCodeDraftLink } from './opencode-draft.js';
 import { AttentionPanel, FreshnessPanel } from './overview.jsx';
 import './styles.css';
 
@@ -31,7 +33,6 @@ const eventIcons = {
   check_result: CircleCheck,
   error: Activity,
 };
-const conversationTypes = new Set(['task_assigned', 'agent_message', 'task_status_changed']);
 const emptyProject = { name: '', folder: '', openCodeUrl: '', openCodeDirectory: '' };
 
 async function projectRequest(route, method, input) {
@@ -328,13 +329,190 @@ function checkState(event) {
   return event.status === 'completed' ? { label: 'Passed', tone: 'green' } : taskStates[event.status];
 }
 
-function TaskBrief({ task, events, names, open }) {
+function TaskHandoff({ task, events, names, workspace, onLaunch }) {
+  const [copyMessage, setCopyMessage] = useState('');
+  const [manualText, setManualText] = useState('');
+  const [draft, setDraft] = useState(null);
+  const [opening, setOpening] = useState(false);
+  const [launchResult, setLaunchResult] = useState(null);
+  const field = useRef(null);
+  const preview = useRef(null);
+  const longDraft = draft && !openCodeDraftLink(draft.directory.trim(), draft.text).prefilled;
+
+  useEffect(() => {
+    if (!manualText) return;
+    field.current?.focus();
+    field.current?.select();
+  }, [manualText]);
+
+  function handoff(handoffId) {
+    return buildHandoff({
+      project: workspace.name, directory: workspace.openCodeDirectory, task, events, names, handoffId,
+    });
+  }
+
+  async function copy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setManualText('');
+      setCopyMessage('Handoff copied.');
+      return true;
+    } catch {
+      setCopyMessage('Clipboard unavailable. Copy the selected text manually.');
+      if (draft) {
+        preview.current?.focus();
+        preview.current?.select();
+      } else {
+        setManualText(text);
+      }
+      return false;
+    }
+  }
+
+  function review() {
+    if (draft) {
+      setDraft(null);
+    } else {
+      const id = crypto.randomUUID();
+      setDraft({ id, directory: workspace.openCodeDirectory, text: handoff(id) });
+    }
+    setManualText('');
+    setCopyMessage('');
+    setLaunchResult(null);
+  }
+
+  async function openDraft(event, blank = false) {
+    event.preventDefault();
+    if (opening || !draft || launchResult?.opened) return;
+    setOpening(true);
+    setLaunchResult(null);
+    try {
+      if (longDraft && !blank && !await copy(draft.text)) {
+        setLaunchResult({ manual: true, message: 'Copy the prompt manually, then open the blank draft.' });
+        return;
+      }
+      const result = await projectRequest('handoff/open', 'POST', {
+        projectId: workspace.id, taskId: task.id, handoffId: draft.id,
+        directory: draft.directory, prompt: longDraft || blank ? '' : draft.text,
+      });
+      setLaunchResult({ opened: true, message: result.prefilled
+        ? 'OpenCode draft opened. Review the prompt there before sending.'
+        : 'Blank draft opened. Paste the handoff into OpenCode before sending.' });
+    } catch (failure) {
+      setLaunchResult({ error: true, message: failure.message });
+    } finally {
+      setOpening(false);
+    }
+    onLaunch();
+  }
+
+  return <section className="task-brief-section handoff-section">
+    <div className="handoff-actions">
+      <button type="button" className="button" onClick={() => copy(draft?.text ?? handoff())} disabled={opening}><Copy size={15} /> Copy handoff</button>
+      <button type="button" className="button" onClick={review} disabled={opening} aria-expanded={!!draft}><ArrowUpRight size={15} /> Continue in OpenCode</button>
+      <span role="status">{copyMessage}</span>
+    </div>
+    {manualText && <textarea ref={field} className="handoff-text" aria-label="Task handoff prompt" value={manualText} rows={9} readOnly />}
+    {draft && <form className="handoff-draft" onSubmit={openDraft}>
+      <label>Confirm local worktree<input value={draft.directory} placeholder="Set the worktree in Data sources" readOnly /></label>
+      <p>This is the directory monitored for this project. To use a different worktree, change its OpenCode project directory in Data sources.</p>
+      <label>Review handoff<textarea ref={preview} className="handoff-text" value={draft.text} rows={10} readOnly /></label>
+      {workspace.openCodeUrl
+        ? <p>{longDraft ? 'This handoff is too long to prefill. The dashboard will copy it and open a blank draft.' :
+            'The handoff opens as a draft. You can edit it in OpenCode before sending.'}</p>
+        : <p>Connect this project to the local OpenCode service in Data sources to open a draft.</p>}
+      {workspace.openCodeUrl && <p>Keep the handoff heading, task, and ID in the first message so the dashboard can track pickup.</p>}
+      <div className="handoff-actions">
+        <button className="button primary" type="submit" disabled={opening || launchResult?.opened || !workspace.openCodeUrl}>
+          {opening ? 'Opening…' : launchResult?.opened ? 'Draft opened' : 'Open draft'}
+        </button>
+        {launchResult?.manual && <button className="button" type="button" disabled={opening}
+          onClick={(event) => openDraft(event, true)}>Open blank draft</button>}
+      </div>
+      {launchResult && <p className={launchResult.error ? 'handoff-error' : undefined} role="status">{launchResult.message}</p>}
+    </form>}
+  </section>;
+}
+
+function TaskChecks({ checks, open }) {
+  return <ul className="task-checks">
+    {checks.map((event) => <li key={event.id}>
+      <button onClick={() => open('event', event.id)} title={event.text}>
+        <span>{event.check_id}</span><Badge state={checkState(event)} dot /><time dateTime={event.recorded_at}>{timeLabel(event.recorded_at)}</time>
+      </button>
+    </li>)}
+  </ul>;
+}
+
+const outcomeStatuses = new Set(['completed', 'failed', 'cancelled']);
+
+function HandoffHistory({ handoffs, warning, events, agents, names, open }) {
+  const reports = handoffReports(handoffs, events);
+  return <section className="task-brief-section handoff-history" aria-labelledby="handoff-history-title">
+    <h3 id="handoff-history-title">Handoff history</h3>
+    {warning && <p role="status">{warning}</p>}
+    {!handoffs.length && !warning && <p>No OpenCode drafts requested for this task yet.</p>}
+    {handoffs.length > 0 && <>
+      <p>Task reports and checks are shown between pickups. They may come from other agents on the same task.</p>
+      <ol>
+        {handoffs.map(({ id, directory, requestedAt, launchStatus, error, pickup }) => {
+          const agent = pickup && agents.find(({ id }) => id === pickup.agentId);
+          const { report, statusReport, checks } = reports.get(id) ?? {};
+          const outcome = outcomeStatuses.has(statusReport?.status);
+          const launchLabel = launchStatus === 'failed' ? 'Draft launch failed' :
+            launchStatus === 'opened' ? 'Awaiting first message' : 'Launch not confirmed';
+          return <li key={id} className="handoff-history-item">
+            <div className="task-brief-heading"><strong>Draft requested</strong>
+              <time dateTime={requestedAt} title={new Date(requestedAt).toLocaleString()}>{timeLabel(requestedAt)}</time>
+            </div>
+            <p className="mono">{directory}</p>
+            {pickup ? <>
+              <div className="task-brief-heading"><strong>Picked up</strong>
+                <time dateTime={pickup.at} title={new Date(pickup.at).toLocaleString()}>{timeLabel(pickup.at)}</time>
+              </div>
+              <div className="task-brief-heading">
+                {agent ? <button className="text-button" onClick={() => open('agent', agent.id)}>{agent.name}</button> : <span>{pickup.title}</span>}
+                <Badge state={agentStates[agent?.status] ?? { label: 'Session status unavailable', tone: 'muted' }} dot />
+              </div>
+              {report && <>
+                <div className="task-brief-heading">
+                  <strong>{outcome && statusReport === report ? 'Outcome reported' : 'Latest task update'}</strong>
+                  <button className="text-button" onClick={() => open('event', report.id)}>
+                    {names.get(report.from) || report.from || sourceName(report.source)} · {timeLabel(report.recorded_at)}
+                  </button>
+                </div>
+                {statusReport === report && <div><Badge state={taskStates[report.status]} dot /></div>}
+                {report.text && <p>{report.text}</p>}
+                <TaskReportFields report={report} />
+              </>}
+              {statusReport && statusReport !== report && <div className="task-brief-heading">
+                <strong>{outcome ? 'Outcome reported' : 'Latest recorded status'}</strong>
+                <button className="text-button" onClick={() => open('event', statusReport.id)}>
+                  <Badge state={taskStates[statusReport.status]} dot />
+                </button>
+              </div>}
+              {!outcome && <p>No final task outcome recorded for this period.</p>}
+              {checks.length > 0 && <><h4>Reported checks</h4><TaskChecks checks={checks} open={open} /></>}
+            </> : <>
+              <div><Badge state={{ label: launchLabel, tone: launchStatus === 'failed' ? 'red' : 'muted' }} /></div>
+              {error && <p>{error}</p>}
+            </>}
+          </li>;
+        })}
+      </ol>
+    </>}
+  </section>;
+}
+
+function TaskBrief({ task, events, names, workspace, handoffs, handoffWarning, agents, open, onLaunch }) {
   const report = task.report;
   const checks = [...latestCheckResults(events).values()];
   return <div className="detail-card">
     <div><Badge state={taskStates[task.status]} dot /><span>{timeLabel(task.lastSeen)}</span></div>
     {task.owner && <div><strong>Assigned to</strong><button className="text-button" onClick={() => open('agent', task.owner)}>{names.get(task.owner) || task.owner}</button></div>}
     {task.parentId && <div><strong>Parent task</strong><span className="mono">{task.parentId}</span></div>}
+    <TaskHandoff task={task} events={events} names={names} workspace={workspace} onLaunch={onLaunch} />
+    <HandoffHistory handoffs={handoffs} warning={handoffWarning} events={events} agents={agents} names={names} open={open} />
     {report && <section className="task-brief-section">
       <div className="task-brief-heading">
         <h3>Latest status report</h3>
@@ -347,13 +525,7 @@ function TaskBrief({ task, events, names, open }) {
     </section>}
     {checks.length > 0 && <section className="task-brief-section">
       <h3>Reported checks</h3>
-      <ul className="task-checks">
-        {checks.map((event) => <li key={event.id}>
-          <button onClick={() => open('event', event.id)} title={event.text}>
-            <span>{event.check_id}</span><Badge state={checkState(event)} dot /><time dateTime={event.recorded_at}>{timeLabel(event.recorded_at)}</time>
-          </button>
-        </li>)}
-      </ul>
+      <TaskChecks checks={checks} open={open} />
     </section>}
     {(!report || (task.summary && task.summary !== report.text)) && <section className="task-brief-section">
       <h3>{task.assignment ? 'Assignment' : 'Description'}</h3>
@@ -365,7 +537,7 @@ function TaskBrief({ task, events, names, open }) {
 function TaskHistory({ events, names, onEvent }) {
   const [showAll, setShowAll] = useState(false);
   const [limit, setLimit] = useState(50);
-  const conversation = events.filter((event) => conversationTypes.has(event.type))
+  const conversation = events.filter((event) => taskConversationTypes.has(event.type))
     .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
   const visible = showAll ? events : conversation;
 
@@ -393,7 +565,7 @@ function TaskHistory({ events, names, onEvent }) {
   </section>;
 }
 
-function Detail({ detail, data, model, names, open, close }) {
+function Detail({ detail, data, model, names, open, close, onLaunch }) {
   const [limit, setLimit] = useState(50);
   useEffect(() => setLimit(50), [detail]);
   let title, subtitle, info, events;
@@ -421,7 +593,10 @@ function Detail({ detail, data, model, names, open, close }) {
     title = task.id;
     subtitle = 'Task brief';
     events = data.events.filter((event) => event.task_id === task.id);
-    info = <TaskBrief task={task} events={events} names={names} open={open} />;
+    const workspace = { ...data.settings, openCodeDirectory: data.openCode.directory ?? data.settings.openCodeDirectory };
+    const handoffs = (data.handoffs ?? []).filter(({ taskId }) => taskId === task.id);
+    info = <TaskBrief task={task} events={events} names={names} workspace={workspace} handoffs={handoffs}
+      handoffWarning={data.handoffWarning} agents={data.agents} open={open} onLaunch={onLaunch} />;
   } else if (detail.kind === 'edge') {
     const edge = detail.id;
     const { from, to } = edge;
@@ -547,7 +722,7 @@ function App() {
     setEditor({ settings, openCode, mirror, isNew: false });
   }
 
-  const model = useMemo(() => buildModel(data?.events ?? [], data?.agents ?? []), [data]);
+  const model = useMemo(() => buildModel(data?.events ?? [], data?.agents ?? [], data?.handoffs), [data]);
   const names = useMemo(() => new Map(model.agents.map(({ id, name }) => [id, name])), [model]);
   const counts = {
     working: model.agents.filter(({ status }) => status === 'working').length,
@@ -623,7 +798,8 @@ function App() {
       </main>
       {editor && <SettingsDialog editor={editor} onClose={() => setEditor(null)}
         onSaved={() => { setEditor(null); refresh(true); }} />}
-      {detail && data && <Detail detail={detail} data={data} model={model} names={names} open={open} close={() => setDetail(null)} />}
+      {detail && data && <Detail detail={detail} data={data} model={model} names={names} open={open}
+        close={() => setDetail(null)} onLaunch={() => refresh(true)} />}
     </div>
   );
 }

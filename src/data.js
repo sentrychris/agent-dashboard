@@ -25,6 +25,8 @@ export const eventTypes = {
   error: { label: 'Error', tone: 'red' },
 };
 
+export const taskConversationTypes = new Set(['task_assigned', 'agent_message', 'task_status_changed']);
+
 export function eventType(type) {
   return Object.hasOwn(eventTypes, type) ? eventTypes[type] : { label: type.replaceAll('_', ' '), tone: 'muted' };
 }
@@ -66,7 +68,33 @@ export function latestCheckResults(events) {
   return checks;
 }
 
-export function buildModel(events, nativeAgents) {
+export function handoffReports(handoffs, events) {
+  const pickedUp = handoffs.filter(({ pickup }) => pickup)
+    .sort((a, b) => a.pickup.at.localeCompare(b.pickup.at));
+  const reports = new Map();
+  for (const [index, handoff] of pickedUp.entries()) {
+    const start = handoff.pickup.at;
+    const end = pickedUp[index + 1]?.pickup.at;
+    const updates = events.filter((event) => event.recorded_at >= start && (!end || event.recorded_at < end));
+    const statusReports = updates.filter((event) => event.type === 'task_status_changed');
+    reports.set(handoff.id, {
+      report: statusReports[0],
+      statusReport: statusReports.find((event) => event.status),
+      checks: [...latestCheckResults(updates).values()],
+    });
+  }
+  return reports;
+}
+
+function newTask(id) {
+  return {
+    id, owner: null, status: 'unknown', explicitStatus: false,
+    summary: '', parentId: null, lastSeen: null, sources: new Set(),
+    statusEvent: null, assignment: null, acknowledged: false, report: null,
+  };
+}
+
+export function buildModel(events, nativeAgents, handoffs = []) {
   const agents = new Map(nativeAgents.map((agent) => [agent.id, { ...agent }]));
   const tasks = new Map();
   const edges = new Map();
@@ -112,11 +140,7 @@ export function buildModel(events, nativeAgents) {
     addEdge(event.from, event.to, event);
     if (!event.task_id) continue;
 
-    const task = tasks.get(event.task_id) ?? {
-      id: event.task_id, owner: null, status: 'unknown', explicitStatus: false,
-      summary: '', parentId: null, lastSeen: null, sources: new Set(),
-      statusEvent: null, assignment: null, acknowledged: false, report: null,
-    };
+    const task = tasks.get(event.task_id) ?? newTask(event.task_id);
     task.lastSeen = event.recorded_at;
     task.parentId = event.parent_task_id || task.parentId;
     task.sources.add(event.source);
@@ -145,6 +169,11 @@ export function buildModel(events, nativeAgents) {
       if (explicit) task.explicitStatus = true;
     }
     tasks.set(task.id, task);
+  }
+
+  for (const handoff of handoffs) {
+    if (tasks.has(handoff.taskId)) continue;
+    tasks.set(handoff.taskId, { ...newTask(handoff.taskId), lastSeen: handoff.pickup?.at ?? handoff.requestedAt });
   }
 
   const taskList = [...tasks.values()].sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
