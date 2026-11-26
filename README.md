@@ -27,6 +27,8 @@ To serve a built copy, run `npm run build` and then `npm start`.
 
 ## Monitoring
 
+- **Task briefs** show the latest status report and the most recent result for each named check on a task. Agents can optionally add [a blocker, next action, and verification](docs/activity-log.md#structured-task-updates) to make those details easy to scan.
+- **Conversation** in a task shows assignments, replies, and status updates oldest first, with verbatim messages and summaries labeled. Switch to **All activity** for every task event, including checks and tool activity.
 - **Needs attention** shows blocked or failed tasks, pending OpenCode approvals, and queued assignments with no acknowledgement after 30 minutes. Agents can also report [failed and passing checks](docs/activity-log.md#reporting-check-results) so a failure stays visible until it passes or the task closes. Select an item to open its source event or session.
 - **Source freshness** shows when the dashboard last checked the local folder, when the cloud mirror last synced successfully, and when the most recent agent report was recorded. To report cloud syncs, have your mirror write [`mirror-status.json`](docs/activity-log.md#cloud-mirror-heartbeat) in the local activity folder after each attempt, including successful runs that copy zero lines.
 
@@ -35,6 +37,8 @@ Existing JSONL files still work as-is. Check results are optional, and the cloud
 ## Optional: connect OpenCode V2
 
 In **Data sources**, enter the URL of a reachable loopback OpenCode V2 API. Set **Project directory** if the OpenCode workspace is somewhere other than the parent of your log folder. The dashboard reads recent sessions, their last 30 messages, tool activity, and pending approvals.
+
+`http://127.0.0.1:4096` is an example address. Use your server’s actual URL, or leave the field blank to use only your activity logs.
 
 To attach an OpenCode session to a task in your logs, set the session's `metadata.task_id` to that task's ID. Title-based matching currently recognizes only `ALD-…` IDs; use metadata for other task ID formats. If the API expects an `Authorization` header, set `DASHBOARD_OPENCODE_AUTHORIZATION` before launching the dashboard.
 

@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const statuses = new Set(['queued', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled']);
+const reportFields = ['blocker', 'next_action', 'verification'];
 const string = (value) => typeof value === 'string' && value.trim() ? value : null;
 
 function parseEvent(line, file) {
@@ -26,6 +27,12 @@ function parseEvent(line, file) {
     text: typeof input.text === 'string' ? input.text : '',
     text_kind: ['verbatim', 'summary'].includes(input.text_kind) ? input.text_kind : null,
   };
+  if (event.type === 'task_status_changed') {
+    for (const field of reportFields) {
+      const value = string(input[field]);
+      if (value) event[field] = value;
+    }
+  }
   const id = string(input.event_id) ?? createHash('sha256').update(JSON.stringify(event)).digest('hex');
   return { ...event, id: `log:${event.project ?? ''}:${id}`, file };
 }

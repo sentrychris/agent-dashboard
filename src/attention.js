@@ -1,3 +1,5 @@
+import { latestCheckResults } from './data.js';
+
 export const acknowledgementDelay = 30 * 60 * 1000;
 
 export const attentionTypes = {
@@ -27,11 +29,13 @@ export function buildAttention(model, events, now) {
   for (const task of model.tasks) {
     const { statusEvent, assignment } = task;
     if (task.status === 'blocked' || task.status === 'failed') {
+      const report = task.report && task.report.recorded_at >= (statusEvent?.recorded_at ?? '')
+        ? task.report : statusEvent;
       items.push({
         id: `task:${task.id}`, type: task.status === 'blocked' ? 'blocked' : 'failedTask', title: task.id,
-        description: statusEvent?.text || task.summary,
-        actorId: task.owner ?? statusEvent?.from, timestamp: statusEvent?.recorded_at ?? task.lastSeen, timeLabel: 'Reported',
-        target: statusEvent ? { kind: 'event', id: statusEvent.id } : { kind: 'task', id: task.id },
+        description: (task.status === 'blocked' && report?.blocker) || report?.text || statusEvent?.text || task.summary,
+        actorId: task.owner ?? report?.from, timestamp: report?.recorded_at ?? task.lastSeen, timeLabel: 'Reported',
+        target: report ? { kind: 'event', id: report.id } : { kind: 'task', id: task.id },
       });
     } else if (assignment && !task.acknowledged && ['queued', 'unknown'].includes(task.status) &&
         now - Date.parse(assignment.recorded_at) >= acknowledgementDelay) {
@@ -43,13 +47,7 @@ export function buildAttention(model, events, now) {
     }
   }
 
-  const seenChecks = new Set();
-  for (const event of events) {
-    if (event.type !== 'check_result' || !event.check_id || !['failed', 'completed'].includes(event.status)) continue;
-    const key = JSON.stringify([event.task_id, event.task_id ? null : event.from, event.check_id]);
-    if (seenChecks.has(key)) continue;
-    seenChecks.add(key);
-
+  for (const [key, event] of latestCheckResults(events)) {
     const task = tasks.get(event.task_id);
     if (event.status !== 'failed' || ['completed', 'cancelled'].includes(task?.status)) continue;
     items.push({

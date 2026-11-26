@@ -55,6 +55,17 @@ export function timeLabel(value) {
   return date.toDateString() === new Date().toDateString() ? time : `${dayFormatter.format(date)} · ${time}`;
 }
 
+export function latestCheckResults(events) {
+  // Like the activity feed, events are ordered newest first.
+  const checks = new Map();
+  for (const event of events) {
+    if (event.type !== 'check_result' || !event.check_id || !['failed', 'completed'].includes(event.status)) continue;
+    const key = JSON.stringify([event.task_id, event.task_id ? null : event.from, event.check_id]);
+    if (!checks.has(key)) checks.set(key, event);
+  }
+  return checks;
+}
+
 export function buildModel(events, nativeAgents) {
   const agents = new Map(nativeAgents.map((agent) => [agent.id, { ...agent }]));
   const tasks = new Map();
@@ -104,20 +115,24 @@ export function buildModel(events, nativeAgents) {
     const task = tasks.get(event.task_id) ?? {
       id: event.task_id, owner: null, status: 'unknown', explicitStatus: false,
       summary: '', parentId: null, lastSeen: null, sources: new Set(),
-      statusEvent: null, assignment: null, acknowledged: false,
+      statusEvent: null, assignment: null, acknowledged: false, report: null,
     };
     task.lastSeen = event.recorded_at;
     task.parentId = event.parent_task_id || task.parentId;
     task.sources.add(event.source);
     if (event.type === 'task_assigned') {
       if (event.to) {
+        if (task.owner !== event.to) task.report = null;
         task.owner = event.to;
         task.assignment = event;
         task.acknowledged = event.to === event.from;
       }
       task.summary = event.text || task.summary;
     } else {
-      if (!task.owner && event.type === 'task_status_changed') task.owner = event.from;
+      if (event.type === 'task_status_changed') {
+        task.owner ||= event.from;
+        task.report = event;
+      }
       if (task.assignment && event.from === task.owner) task.acknowledged = true;
     }
     if (!task.summary && event.text) task.summary = event.text;

@@ -18,6 +18,9 @@ Only `recorded_at` and `type` are required for a line to be read. Include `proje
 | `from` | string or `null` | Sender, assigner, or reporting agent. Use a stable agent ID. |
 | `to` | string or `null` | Recipient or assignee. Leave empty for an update that has no recipient. |
 | `status` | string or `null` | `queued`, `in_progress`, `blocked`, `completed`, `failed`, or `cancelled`. Missing or unrecognized values are treated as unset. |
+| `blocker` | string or `null` | What is preventing progress, if anything. Optional on `task_status_changed`. |
+| `next_action` | string or `null` | The next concrete step. Optional on `task_status_changed`. |
+| `verification` | string or `null` | What was checked and what the check showed. Optional on `task_status_changed`. |
 | `text` | string | Message or brief description of the event. Escape line breaks as `\n` so the JSON object stays on one line. |
 | `text_kind` | string or `null` | `verbatim` for the exact message; `summary` for a paraphrase or status report. |
 | `event_id` | string | Optional unique identifier within the project. Reuse it when copying the same event to another file. Without it, the dashboard de-duplicates identical normalized records. |
@@ -53,6 +56,16 @@ Save these blocks as two separate files in the same activity folder. The dashboa
 {"event_id":"demo-42-reply","recorded_at":"2026-05-12T09:32:00Z","project":"Example project","source":"custom-harness","type":"agent_message","task_id":"DEMO-42","from":"builder","to":"coordinator","text":"I’ll check the existing empty-state component first.","text_kind":"verbatim"}
 {"event_id":"demo-42-started","recorded_at":"2026-05-12T09:34:00Z","project":"Example project","source":"custom-harness","type":"task_status_changed","task_id":"DEMO-42","from":"builder","to":null,"status":"in_progress","text":"Found the shared component and started wiring it into the task list.","text_kind":"summary"}
 ```
+
+## Structured task updates
+
+Existing logs already populate the task brief with the latest status report and any named check results. To show details in dedicated fields, optionally add `blocker`, `next_action`, and `verification` to a `task_status_changed` record:
+
+```jsonl
+{"recorded_at":"2026-05-12T09:36:00Z","project":"Example project","source":"custom-harness","type":"task_status_changed","task_id":"DEMO-42","from":"builder","status":"blocked","text":"The component is ready for review.","blocker":"Waiting for the approved empty-state copy.","next_action":"Replace the placeholder copy and rerun the task-list tests.","verification":"Rendered the empty state locally with placeholder copy.","text_kind":"summary"}
+```
+
+Each report is a snapshot. The brief displays fields from the latest report for the current assignment, so repeat information that still applies in the next report. Omit a field or set it to `null` if it does not apply or is unknown. For a blocked task, **Needs attention** uses the reported blocker when available. Keep sending `check_result` events separately for named checks that should raise or clear alerts.
 
 ## Reporting check results
 

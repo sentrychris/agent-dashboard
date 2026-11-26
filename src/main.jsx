@@ -5,7 +5,7 @@ import {
   Clock3, FolderOpen, GitFork, LayoutGrid, ListTodo, Menu, MessageSquare, Radio, RefreshCw,
   Search, Settings2, Terminal, Users, Workflow, X,
 } from 'lucide-react';
-import { agentStates, buildModel, eventType, eventTypes, initial, sourceName, taskStates, timeLabel } from './data.js';
+import { agentStates, buildModel, eventType, eventTypes, initial, latestCheckResults, sourceName, taskStates, timeLabel } from './data.js';
 import { RelationshipGraph } from './graph.jsx';
 import { AttentionPanel, FreshnessPanel } from './overview.jsx';
 import './styles.css';
@@ -31,6 +31,7 @@ const eventIcons = {
   check_result: CircleCheck,
   error: Activity,
 };
+const conversationTypes = new Set(['task_assigned', 'agent_message', 'task_status_changed']);
 
 function Badge({ state, dot = false }) {
   return <span className={`badge ${state.tone}`}>{dot && <span className="status-dot" />}{state.label}</span>;
@@ -52,13 +53,15 @@ function Stat({ label, value, detail, icon: Icon, tone, view }) {
   );
 }
 
-function EventList({ events, names, onEvent, compact = false }) {
+function EventList({ events, names, onEvent, compact = false, conversation = false }) {
   if (!events.length) return <Empty title="No activity found">New events appear when a connected source records them.</Empty>;
   return (
-    <ol className={`event-list ${compact ? 'event-list-compact' : ''}`}>
+    <ol className={`event-list${compact ? ' event-list-compact' : ''}${conversation ? ' event-list-conversation' : ''}`}>
       {events.map((event) => {
         const type = eventType(event.type);
         const Icon = Object.hasOwn(eventIcons, event.type) ? eventIcons[event.type] : Activity;
+        const text = event.text || (conversation ? '' : event.blocker || event.next_action || event.verification || type.label);
+        const status = event.type === 'agent_message' ? null : taskStates[event.status];
         return (
           <li key={event.id}>
             <button className="event-row" onClick={() => onEvent(event.id)} title="Open event and conversation">
@@ -68,10 +71,11 @@ function EventList({ events, names, onEvent, compact = false }) {
                   <strong>{names.get(event.from) || event.from || (event.source === 'opencode' ? 'User' : type.label)}</strong>
                   {event.to && <><ArrowRight size={12} /><span>{names.get(event.to) || event.to}</span></>}
                 </span>
-                <span className="event-text">{event.text || type.label}</span>
+                {text && <span className="event-text">{text}</span>}
                 <span className="event-tags">
                   <span>{type.label}</span>
-                  {event.task_id && <span className="mono">{event.task_id}</span>}
+                  {!conversation && event.task_id && <span className="mono">{event.task_id}</span>}
+                  {conversation && status && <Badge state={status} />}
                   {event.check_id && <span>{event.check_id}</span>}
                   {!compact && <span>{sourceName(event.source)}</span>}
                   {event.text_kind && <span>{event.text_kind === 'verbatim' ? 'Verbatim' : 'Summary'}</span>}
@@ -79,6 +83,7 @@ function EventList({ events, names, onEvent, compact = false }) {
               </span>
               <time dateTime={event.recorded_at} title={new Date(event.recorded_at).toLocaleString()}>{timeLabel(event.recorded_at)}</time>
             </button>
+            {conversation && <TaskReportFields report={event} />}
           </li>
         );
       })}
@@ -171,7 +176,8 @@ function ActivityView({ events, model, names, onEvent }) {
   const term = query.trim().toLowerCase();
   const filtered = events.filter((event) => (type === 'all' || event.type === type) &&
     (agent === 'all' || event.from === agent || event.to === agent) &&
-    [event.text, event.from, names.get(event.from), event.to, names.get(event.to), event.task_id, event.check_id, event.source].join(' ').toLowerCase().includes(term));
+    [event.text, event.blocker, event.next_action, event.verification, event.from, names.get(event.from), event.to,
+      names.get(event.to), event.task_id, event.check_id, event.source].join(' ').toLowerCase().includes(term));
   return <section className="panel">
     <PanelTitle title="Activity log" description={`${filtered.length} ${filtered.length === 1 ? 'event' : 'events'} · newest first`} />
     <div className="filter-bar">
@@ -253,6 +259,84 @@ function SettingsDialog({ settings, openCode, mirror, onClose, onSaved }) {
   </Dialog>;
 }
 
+function TaskReportFields({ report }) {
+  const fields = [['Blocker', report.blocker], ['Next action', report.next_action], ['Verification', report.verification]]
+    .filter(([, value]) => value);
+  if (!fields.length) return null;
+  return <dl className="task-report-fields">
+    {fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+  </dl>;
+}
+
+function checkState(event) {
+  return event.status === 'completed' ? { label: 'Passed', tone: 'green' } : taskStates[event.status];
+}
+
+function TaskBrief({ task, events, names, open }) {
+  const report = task.report;
+  const checks = [...latestCheckResults(events).values()];
+  return <div className="detail-card">
+    <div><Badge state={taskStates[task.status]} dot /><span>{timeLabel(task.lastSeen)}</span></div>
+    {task.owner && <div><strong>Assigned to</strong><button className="text-button" onClick={() => open('agent', task.owner)}>{names.get(task.owner) || task.owner}</button></div>}
+    {task.parentId && <div><strong>Parent task</strong><span className="mono">{task.parentId}</span></div>}
+    {report && <section className="task-brief-section">
+      <div className="task-brief-heading">
+        <h3>Latest status report</h3>
+        <button className="text-button" onClick={() => open('event', report.id)} title="Open the recorded status report">
+          {names.get(report.from) || report.from || sourceName(report.source)} · {timeLabel(report.recorded_at)}
+        </button>
+      </div>
+      <TaskReportFields report={report} />
+      {report.text && <p>{report.text}</p>}
+    </section>}
+    {checks.length > 0 && <section className="task-brief-section">
+      <h3>Reported checks</h3>
+      <ul className="task-checks">
+        {checks.map((event) => <li key={event.id}>
+          <button onClick={() => open('event', event.id)} title={event.text}>
+            <span>{event.check_id}</span><Badge state={checkState(event)} dot /><time dateTime={event.recorded_at}>{timeLabel(event.recorded_at)}</time>
+          </button>
+        </li>)}
+      </ul>
+    </section>}
+    {(!report || (task.summary && task.summary !== report.text)) && <section className="task-brief-section">
+      <h3>{task.assignment ? 'Assignment' : 'Description'}</h3>
+      <p>{task.summary || 'No description recorded.'}</p>
+    </section>}
+  </div>;
+}
+
+function TaskHistory({ events, names, onEvent }) {
+  const [showAll, setShowAll] = useState(false);
+  const [limit, setLimit] = useState(50);
+  const conversation = events.filter((event) => conversationTypes.has(event.type))
+    .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
+  const visible = showAll ? events : conversation;
+
+  function switchView(all) {
+    if (all === showAll) return;
+    setShowAll(all);
+    setLimit(50);
+  }
+
+  return <section className="task-history" aria-labelledby="task-history-title">
+    <div className="task-history-header">
+      <h3 id="task-history-title">Task history</h3>
+      <div className="history-controls" role="group" aria-label="Task history view">
+        <button type="button" aria-pressed={!showAll} onClick={() => switchView(false)}>Conversation <span aria-hidden="true">{conversation.length}</span></button>
+        <button type="button" aria-pressed={showAll} onClick={() => switchView(true)}>All activity <span aria-hidden="true">{events.length}</span></button>
+      </div>
+      <p>{showAll ? 'Newest first · All recorded task events' : 'Oldest first · Assignments, replies, and status updates'}</p>
+    </div>
+    {!showAll && !visible.length
+      ? <Empty icon={MessageSquare} title="No conversation recorded">Check All activity for other events on this task.</Empty>
+      : <EventList events={visible.slice(0, limit)} names={names} onEvent={onEvent} conversation={!showAll} />}
+    {visible.length > limit && <div className="more">
+      <button className="button" onClick={() => setLimit((count) => count + 50)}>Show more events</button>
+    </div>}
+  </section>;
+}
+
 function Detail({ detail, data, model, names, open, close }) {
   const [limit, setLimit] = useState(50);
   useEffect(() => setLimit(50), [detail]);
@@ -279,14 +363,9 @@ function Detail({ detail, data, model, names, open, close }) {
     const task = model.tasks.find(({ id }) => id === detail.id);
     if (!task) return null;
     title = task.id;
-    subtitle = 'Task history';
+    subtitle = 'Task brief';
     events = data.events.filter((event) => event.task_id === task.id);
-    info = <div className="detail-card">
-      <div><Badge state={taskStates[task.status]} dot /><span>{timeLabel(task.lastSeen)}</span></div>
-      {task.owner && <div><strong>Assigned to</strong><button className="text-button" onClick={() => open('agent', task.owner)}>{names.get(task.owner) || task.owner}</button></div>}
-      {task.parentId && <div><strong>Parent task</strong><span className="mono">{task.parentId}</span></div>}
-      <p>{task.summary || 'No description recorded.'}</p>
-    </div>;
+    info = <TaskBrief task={task} events={events} names={names} open={open} />;
   } else if (detail.kind === 'edge') {
     const edge = detail.id;
     const { from, to } = edge;
@@ -306,18 +385,23 @@ function Detail({ detail, data, model, names, open, close }) {
       <div><strong>{[names.get(event.from) || event.from, names.get(event.to) || event.to].filter(Boolean).join(' → ') || sourceName(event.source)}</strong><time dateTime={event.recorded_at}>{new Date(event.recorded_at).toLocaleString()}</time></div>
       <div><span>{sourceName(event.source)}{event.file ? ` · ${event.file}` : ''}</span>{event.text_kind && <Badge state={{ label: event.text_kind === 'verbatim' ? 'Verbatim' : 'Summary', tone: 'muted' }} />}</div>
       {event.check_id && <div><strong>Check</strong><span>{event.check_id}</span></div>}
-      <p>{event.text || 'No message text recorded.'}</p>
+      <TaskReportFields report={event} />
+      {(event.text || !(event.blocker || event.next_action || event.verification)) && <p>{event.text || 'No message text recorded.'}</p>}
       {(event.task_id || event.status) && <div>
         {event.task_id && <button className="text-button mono" onClick={() => open('task', event.task_id)}>{event.task_id}</button>}
-        {event.status && <Badge state={event.type === 'check_result' && event.status === 'completed'
-          ? { label: 'Passed', tone: 'green' } : taskStates[event.status]} dot />}
+        {event.status && <Badge state={event.type === 'check_result' ? checkState(event) : taskStates[event.status]} dot />}
       </div>}
     </div>;
   }
-  return <Dialog title={title} subtitle={subtitle} onClose={close}>
-    <div className="detail-body">{info}<h3>{detail.kind === 'event' ? 'Related task activity' : 'Recorded activity'}</h3>
-      <EventList events={events.slice(0, limit)} names={names} onEvent={(id) => open('event', id)} />
-      {events.length > limit && <div className="more"><button className="button" onClick={() => setLimit(limit + 50)}>Show more events</button></div>}
+  const onEvent = (id) => open('event', id);
+  const dialogKey = `${detail.kind}:${detail.kind === 'edge' ? detail.id.id : detail.id}`;
+  return <Dialog key={dialogKey} title={title} subtitle={subtitle} onClose={close}>
+    <div className="detail-body">{info}
+      {detail.kind === 'task' ? <TaskHistory events={events} names={names} onEvent={onEvent} /> : <>
+        <h3>{detail.kind === 'event' ? 'Related task activity' : 'Recorded activity'}</h3>
+        <EventList events={events.slice(0, limit)} names={names} onEvent={onEvent} />
+        {events.length > limit && <div className="more"><button className="button" onClick={() => setLimit(limit + 50)}>Show more events</button></div>}
+      </>}
     </div>
   </Dialog>;
 }
